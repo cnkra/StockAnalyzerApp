@@ -6,24 +6,24 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.time.LocalDate;
 import java.util.*;
+
 import org.json.JSONObject;
+import config.ApiConfig;
+import model.ApiProvider;
 
-// Fetches historical daily stock data from Alpha Vantage API.
+public class StockDataFetcher {
 
-public class StockDataFetcher
-{
-    private static final String API_KEY = "38K5G0K9RTXXNMVP"; // TODO: Replace with your own key :)
-    private static final String BASE_URL = "https://www.alphavantage.co/query";
+    public List<PriceCandle> fetchPriceCandles(String symbol) throws Exception {
+        String url;
 
-    /*
-    Fetches daily close prices for the given stock symbol.
-    @param symbol Stock ticker symbol
-    @return Map with LocalDate keys and closing price values
-     */
-
-    public Map<LocalDate, Double> fetchDailyClosingPrices(String symbol) throws Exception{
-        String function = "TIME_SERIES_DAILY";
-        String url = String.format("%s?function=%s&symbol=%s&apikey=%s", BASE_URL, function, symbol, API_KEY);
+        if (ApiConfig.getProvider() == ApiProvider.ALPHA_VANTAGE) {
+            String baseUrl = "https://www.alphavantage.co/query";
+            String function = "TIME_SERIES_DAILY";
+            url = String.format("%s?function=%s&symbol=%s&apikey=%s", baseUrl, function, symbol, ApiConfig.getApiKey());
+        } else {
+            String baseUrl = "https://api.twelvedata.com/time_series";
+            url = String.format("%s?symbol=%s&interval=1day&outputsize=5000&apikey=%s", baseUrl, symbol, ApiConfig.getApiKey());
+        }
 
         HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
         connection.setRequestMethod("GET");
@@ -36,24 +36,84 @@ public class StockDataFetcher
         reader.close();
 
         JSONObject json = new JSONObject(responseBuilder.toString());
-        System.out.println(json.toString(2)); // API'den dönen cevabı ekrana yazdır
-        JSONObject timeSeries = json.getJSONObject("Time Series (Daily)");
+
+        List<PriceCandle> candles = new ArrayList<>();
+
+        if (ApiConfig.getProvider() == ApiProvider.ALPHA_VANTAGE) {
+            JSONObject timeSeries = json.getJSONObject("Time Series (Daily)");
+            for (String date : timeSeries.keySet()) {
+                JSONObject dayData = timeSeries.getJSONObject(date);
+                double open = dayData.getDouble("1. open");
+                double high = dayData.getDouble("2. high");
+                double low = dayData.getDouble("3. low");
+                double close = dayData.getDouble("4. close");
+                candles.add(new PriceCandle(LocalDate.parse(date), open, high, low, close));
+            }
+        } else {
+            for (Object o : json.getJSONArray("values")) {
+                JSONObject entry = (JSONObject) o;
+                LocalDate date = LocalDate.parse(entry.getString("datetime"));
+                double open = entry.getDouble("open");
+                double high = entry.getDouble("high");
+                double low = entry.getDouble("low");
+                double close = entry.getDouble("close");
+                candles.add(new PriceCandle(date, open, high, low, close));
+            }
+        }
+
+        // Sort descending (most recent first)
+        candles.sort((a, b) -> b.date.compareTo(a.date));
+
+        return candles;
+    }
+
+
+
+    public Map<LocalDate, Double> fetchDailyClosingPrices(String symbol) throws Exception {
+        String url;
+
+        if (ApiConfig.getProvider() == ApiProvider.ALPHA_VANTAGE) {
+            String baseUrl = "https://www.alphavantage.co/query";
+            String function = "TIME_SERIES_DAILY";
+            url = String.format("%s?function=%s&symbol=%s&apikey=%s",
+                    baseUrl, function, symbol, ApiConfig.getApiKey());
+        } else {
+            String baseUrl = "https://api.twelvedata.com/time_series";
+            url = String.format("%s?symbol=%s&interval=1day&apikey=%s",
+                    baseUrl, symbol, ApiConfig.getApiKey());
+        }
+
+        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        connection.setRequestMethod("GET");
+
+        BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+        StringBuilder responseBuilder = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null)
+            responseBuilder.append(line);
+        reader.close();
+
+        JSONObject json = new JSONObject(responseBuilder.toString());
+        System.out.println(json.toString(2)); // Cevabı yaz
 
         Map<LocalDate, Double> priceData = new TreeMap<>(Collections.reverseOrder());
-        for (String date : timeSeries.keySet()) {
-            JSONObject dayData = timeSeries.getJSONObject(date);
-            double close= dayData.getDouble("4. close");
-            priceData.put(LocalDate.parse(date), close);
+
+        if (ApiConfig.getProvider() == ApiProvider.ALPHA_VANTAGE) {
+            JSONObject timeSeries = json.getJSONObject("Time Series (Daily)");
+            for (String date : timeSeries.keySet()) {
+                JSONObject dayData = timeSeries.getJSONObject(date);
+                double close = dayData.getDouble("4. close");
+                priceData.put(LocalDate.parse(date), close);
+            }
+        } else {
+            for (Object o : json.getJSONArray("values")) {
+                JSONObject entry = (JSONObject) o;
+                LocalDate date = LocalDate.parse(entry.getString("datetime"));
+                double close = entry.getDouble("close");
+                priceData.put(date, close);
+            }
         }
+
         return priceData;
     }
 }
-
-
-
-
-
-
-
-
-
